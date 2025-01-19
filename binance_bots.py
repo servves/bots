@@ -1817,10 +1817,10 @@ class BinanceFuturesBot:
     def get_account_balance(self):
         """Hesap bakiyesini al (Vadeli işlemler hesabı)"""
         try:
-            account = self.client.futures_account_balance()
-            for asset in account:
+            account_info = self.client.account()
+            for asset in account_info['assets']:
                 if asset['asset'] == 'USDT':
-                    return float(asset['balance'])
+                    return float(asset['walletBalance'])
             return 0.0
         except Exception as e:
             logging.error(f"Bakiye alma hatası: {e}")
