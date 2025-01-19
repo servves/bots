@@ -1646,7 +1646,7 @@ class BinanceFuturesBot:
         """İşlem yönetimi ve risk kontrolü"""
         try:
             trade_side = signal_type
-
+    
             # Mevcut pozisyonu kontrol et
             current_position = self.positions.get(symbol)
             if current_position:
@@ -1666,59 +1666,65 @@ class BinanceFuturesBot:
                         logging.error(f"Mevcut pozisyon kapatma hatası: {close_order_error}")
                         await self.send_telegram(f"⚠️ Mevcut pozisyon kapatma hatası: {symbol} - {str(close_order_error)}")
                         return False
-
+    
             # Hesap bakiyesini al
             balance = float(self.get_account_balance()) * 0.9  # Bütçenin %90'ı
             logging.info(f"Mevcut bakiye (bütçenin %90'i): {balance} USDT")
-
+    
             # Check if balance is below 5 USD
-            if balance < 0:
+            if balance < 5:
                 logging.warning(f"Yetersiz bakiye: {balance} USDT. İşlem yapılmayacak.")
                 await self.send_telegram(f"⚠️ Yetersiz bakiye: {balance} USDT. İşlem yapılmayacak.")
                 return False
-
+    
             # Kaldıraç ayarı
             try:
                 self.client.change_leverage(
                     symbol=symbol,
                     leverage=9
                 )
-                logging.info(f"Kaldıraç ayarlandı: {symbol} 12x")
+                logging.info(f"Kaldıraç ayarlandı: {symbol} 9x")
             except Exception as e:
                 logging.error(f"Kaldıraç ayarlama hatası: {e}")
                 return False
-
+    
             # Sembol bilgilerini al
             symbol_info = self.get_symbol_info(symbol)
             if not symbol_info:
                 logging.error(f"Sembol bilgisi alınamadı: {symbol}")
                 return False
-
-            # Minimum işlem değeri (5.1 USDT) için quantity hesaplama
-            min_notional = 5  # Biraz daha yüksek tutalım
+    
+            # Minimum işlem değeri (5 USDT) için quantity hesaplama
+            min_notional = 5
             min_quantity = min_notional / current_price
-
+    
             # Risk bazlı quantity hesaplama
             risk_percentage = 0.95
             risk_based_quantity = (balance * risk_percentage) / current_price
-
+    
             # İkisinden büyük olanı seç
             quantity = max(min_quantity, risk_based_quantity)
-
+    
             # Quantity'yi sembol hassasiyetine yuvarla
             quantity = self.round_to_precision(quantity, symbol_info['quantityPrecision'])
             price = self.round_to_precision(current_price, symbol_info['pricePrecision'])
-
+    
             # Son kontrol
             final_notional = quantity * price
             logging.info(f"Final işlem değeri: {final_notional} USDT")
-
+    
             if final_notional < min_notional:
                 # Quantity'yi tekrar ayarla
                 quantity = self.round_to_precision((min_notional / price) * 1.01, symbol_info['quantityPrecision'])
                 final_notional = quantity * price
                 logging.info(f"Quantity yeniden ayarlandı: {quantity} ({final_notional} USDT)")
-
+    
+            # Ensure quantity is greater than zero
+            if quantity <= 0:
+                logging.error("Quantity is less than or equal to zero after adjustments.")
+                await self.send_telegram(f"⚠️ Quantity is less than or equal to zero for {symbol}. Trade will not be executed.")
+                return False
+    
             # Market emri oluştur
             try:
                 order = self.client.new_order(
@@ -1727,11 +1733,11 @@ class BinanceFuturesBot:
                     type='MARKET',
                     quantity=quantity
                 )
-
+    
                 # Stop Loss ve Take Profit hesapla
                 sl_price = price * (0.98 if trade_side == 'BUY' else 1.02)
                 tp_price = price * (1.03 if trade_side == 'BUY' else 0.97)
-
+    
                 # Stop Loss emri
                 sl_order = self.client.new_order(
                     symbol=symbol,
@@ -1740,7 +1746,7 @@ class BinanceFuturesBot:
                     stopPrice=self.round_to_precision(sl_price, symbol_info['pricePrecision']),
                     closePosition='true'
                 )
-
+    
                 # Take Profit emri
                 tp_order = self.client.new_order(
                     symbol=symbol,
@@ -1749,14 +1755,14 @@ class BinanceFuturesBot:
                     stopPrice=self.round_to_precision(tp_price, symbol_info['pricePrecision']),
                     closePosition='true'
                 )
-
+    
                 # Pozisyonu kaydet
                 self.positions[symbol] = {
                     'side': trade_side,
                     'quantity': quantity,
                     'entry_price': price
                 }
-
+    
                 message = (
                     f"✅ İşlem Gerçekleşti\n"
                     f"Sembol: {symbol}\n"
@@ -1766,18 +1772,18 @@ class BinanceFuturesBot:
                     f"İşlem Değeri: {final_notional:.2f} USDT\n"
                     f"Stop Loss: {sl_price}\n"
                     f"Take Profit: {tp_price}\n"
-                    f"Kaldıraç: 12x\n"
+                    f"Kaldıraç: 9x\n"
                     f"Bakiye: {balance} USDT"
                 )
-
+    
                 logging.info(f"İşlem başarılı: {symbol} {trade_side} {quantity}")
                 await self.send_telegram(message)
-
+    
             except Exception as order_error:
                 logging.error(f"Order yerleştirme hatası: {order_error}")
                 await self.send_telegram(f"⚠️ İşlem Hatası: {symbol} - {str(order_error)}")
                 return False
-
+    
             # ROI %10 olduğunda pozisyonu kapatma kontrolü
             while True:
                 try:
@@ -1785,7 +1791,7 @@ class BinanceFuturesBot:
                     current_price = float(self.client.ticker_price(symbol=symbol)['price'])
                     entry_price = self.positions[symbol]['entry_price']
                     roi = (current_price - entry_price) / entry_price * 100 if trade_side == 'BUY' else (entry_price - current_price) / entry_price * 100
-
+    
                     # ROI %10'a ulaştıysa pozisyonu kapat
                     if roi >= 15:
                         close_order = self.client.new_order(
@@ -1798,17 +1804,17 @@ class BinanceFuturesBot:
                         await self.send_telegram(f"🏆 ROI %15'a ulaştı: {symbol} {trade_side} {self.positions[symbol]['quantity']}")
                         self.positions.pop(symbol)
                         break
-
+                    
                     # Bekleme süresi
                     await asyncio.sleep(self.config['check_interval'])
-
+    
                 except Exception as roi_check_error:
                     logging.error(f"ROI kontrol hatası: {roi_check_error}")
                     await self.send_telegram(f"⚠️ ROI kontrol hatası: {symbol} - {str(roi_check_error)}")
                     break
-
+                
             return True
-
+    
         except Exception as e:
             logging.error(f"İşlem yönetimi hatası: {e}")
             await self.send_telegram(f"⚠️ İşlem Yönetimi Hatası: {symbol} - {str(e)}")
